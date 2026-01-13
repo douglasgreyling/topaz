@@ -254,95 +254,62 @@ impl Lexer {
 
     fn read_number(&mut self) -> (TokenType, String) {
         let position = self.position;
+
+        // Read integer part and check for errors
+        let integer_part_valid = self.read_number_part();
+
+        // Check if we have a decimal point followed by a digit
+        if self.ch == '.' && Self::is_digit(self.peek_char()) {
+            self.read_char(); // consume '.'
+
+            let decimal_part_valid = self.read_number_part();
+
+            let literal = self.input[position..self.position].iter().collect();
+
+            if integer_part_valid && decimal_part_valid {
+                return (TokenType::Float, literal);
+            } else {
+                return (TokenType::Illegal, literal);
+            }
+        }
+
+        let literal = self.input[position..self.position].iter().collect();
+
+        if integer_part_valid {
+            (TokenType::Integer, literal)
+        } else {
+            (TokenType::Illegal, literal)
+        }
+    }
+
+    // Helper method to read a sequence of digits with optional underscores
+    // Returns false if the sequence is invalid (consecutive underscores or trailing underscore)
+    fn read_number_part(&mut self) -> bool {
         let mut last_was_underscore = false;
+        let mut has_digits = false;
 
         while Self::is_digit(self.ch) || self.ch == '_' {
             if self.ch == '_' {
                 if last_was_underscore {
+                    // Consecutive underscores - consume rest of number and mark as invalid
                     while Self::is_digit(self.ch) || self.ch == '_' {
                         self.read_char();
                     }
 
-                    if self.ch == '.' {
-                        self.read_char();
-
-                        while Self::is_digit(self.ch) || self.ch == '_' {
-                            self.read_char();
-                        }
-                    }
-
-                    return (
-                        TokenType::Illegal,
-                        self.input[position..self.position].iter().collect(),
-                    );
+                    return false;
                 }
+
                 last_was_underscore = true;
             } else {
                 last_was_underscore = false;
+                has_digits = true;
             }
+
             self.read_char();
         }
 
-        if last_was_underscore && self.ch == '.' {
-            self.read_char();
-
-            while Self::is_digit(self.ch) || self.ch == '_' {
-                self.read_char();
-            }
-
-            return (
-                TokenType::Illegal,
-                self.input[position..self.position].iter().collect(),
-            );
-        }
-
-        if last_was_underscore {
-            return (
-                TokenType::Illegal,
-                self.input[position..self.position].iter().collect(),
-            );
-        }
-
-        if self.ch == '.' && Self::is_digit(self.peek_char()) {
-            self.read_char();
-
-            last_was_underscore = false;
-
-            while Self::is_digit(self.ch) || self.ch == '_' {
-                if self.ch == '_' {
-                    if last_was_underscore {
-                        while Self::is_digit(self.ch) || self.ch == '_' {
-                            self.read_char();
-                        }
-                        return (
-                            TokenType::Illegal,
-                            self.input[position..self.position].iter().collect(),
-                        );
-                    }
-                    last_was_underscore = true;
-                } else {
-                    last_was_underscore = false;
-                }
-                self.read_char();
-            }
-
-            if last_was_underscore {
-                return (
-                    TokenType::Illegal,
-                    self.input[position..self.position].iter().collect(),
-                );
-            }
-
-            return (
-                TokenType::Float,
-                self.input[position..self.position].iter().collect(),
-            );
-        }
-
-        (
-            TokenType::Integer,
-            self.input[position..self.position].iter().collect(),
-        )
+        // Number part ending with underscore is invalid
+        !last_was_underscore && has_digits
     }
 }
 
