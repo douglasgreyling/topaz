@@ -337,8 +337,6 @@ mod tests {
             .map(|t| (t.token_type, t.literal))
             .collect();
 
-        println!("Tokens: {:?}", tokens);
-
         assert_eq!(
             expected.len(),
             tokens.len(),
