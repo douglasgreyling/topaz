@@ -1,11 +1,11 @@
 #[derive(Debug)]
-pub struct Token {
+pub struct Token<'a> {
     pub token_type: TokenType,
-    pub literal: String,
+    pub literal: &'a str,
 }
 
-impl Token {
-    pub fn new(token_type: TokenType, literal: String) -> Self {
+impl<'a> Token<'a> {
+    pub fn new(token_type: TokenType, literal: &'a str) -> Self {
         Token {
             token_type,
             literal,
