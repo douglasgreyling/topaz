@@ -41,13 +41,14 @@ impl Lexer {
             '"' => {
                 let literal = self.read_string();
 
-                if self.ch == '"' {
-                    Token::new(TokenType::String, literal)
+                // Check if string was properly terminated (has at least opening and closing quotes)
+                if literal.len() >= 2 && literal.ends_with('"') {
+                    return Token::new(TokenType::String, literal);
                 } else {
-                    Token::new(
+                    return Token::new(
                         TokenType::Illegal,
-                        format!("unterminated string: \"{}\"", literal),
-                    )
+                        format!("unterminated string: {}", literal),
+                    );
                 }
             }
             '=' => match self.peek_char() {
@@ -82,15 +83,46 @@ impl Lexer {
             ':' => {
                 self.read_char();
 
-                if Self::is_letter(self.ch) {
-                    return Token::new(TokenType::Symbol, format!(":{}", self.read_identifier()));
+                if self.ch.is_alphabetic() || self.ch == '_' {
+                    let literal = self.read_identifier();
+                    return Token::new(TokenType::Symbol, format!(":{}", literal));
+                } else if Self::is_digit(self.ch) {
+                    let position = self.position;
+                    let (_, _) = self.read_number();
+
+                    if self.ch == '!' || self.ch == '?' {
+                        self.read_char();
+                    }
+
+                    let literal: String = self.input[position..self.position].iter().collect();
+
+                    return Token::new(TokenType::Illegal, format!(":{}", literal));
+                } else if !self.ch.is_alphabetic() && !Self::is_whitespace(self.ch) {
+                    let position = self.position;
+
+                    while !self.ch.is_alphabetic() {
+                        self.read_char();
+                    }
+
+                    let literal: String = self.input[position..self.position].iter().collect();
+                    return Token::new(TokenType::Illegal, format!(":{}", literal));
                 } else {
-                    Token::new(TokenType::Illegal, self.ch.to_string())
+                    Token::new(TokenType::Illegal, ":".to_string())
                 }
             }
             _ => {
-                if Self::is_letter(self.ch) {
+                if self.ch.is_alphabetic() || self.ch == '_' {
                     let literal = self.read_identifier();
+
+                    if literal.starts_with('_') {
+                        if let Some(first_non_underscore) =
+                            literal.chars().skip_while(|&c| c == '_').next()
+                        {
+                            if first_non_underscore.is_numeric() {
+                                return Token::new(TokenType::Illegal, literal);
+                            }
+                        }
+                    }
 
                     if self.ch == ':' {
                         self.read_char(); // Advance past the colon
@@ -146,14 +178,9 @@ impl Lexer {
     }
 
     fn read_comment(&mut self) -> String {
-        let mut position = self.position + 1; // Skip the '#' character
+        let position = self.position;
 
         self.read_char();
-
-        while self.ch == ' ' {
-            position += 1;
-            self.read_char();
-        }
 
         while self.ch != '\n' && self.ch != '\0' {
             self.read_char();
@@ -163,11 +190,22 @@ impl Lexer {
     }
 
     fn read_string(&mut self) -> String {
-        let position = self.position + 1; // Skip the opening quote
+        let position = self.position;
 
-        self.read_char();
+        loop {
+            self.read_char();
 
-        while self.ch != '"' && self.ch != '\0' {
+            if self.ch == '\\' && self.peek_char() == '"' {
+                self.read_char();
+                continue;
+            }
+
+            if self.ch == '"' || self.ch == '\0' {
+                break;
+            }
+        }
+
+        if self.ch == '"' {
             self.read_char();
         }
 
@@ -179,44 +217,917 @@ impl Lexer {
     fn read_identifier(&mut self) -> String {
         let position = self.position;
 
-        while Self::is_letter(self.ch) {
+        while self.ch.is_alphanumeric() || self.ch == '_' {
+            self.read_char();
+        }
+
+        if self.ch == '!' || self.ch == '?' {
             self.read_char();
         }
 
         self.input[position..self.position].iter().collect()
     }
 
-    fn is_letter(ch: char) -> bool {
-        ch.is_alphabetic() || ch == '_'
-    }
-
     fn is_digit(ch: char) -> bool {
         ch.is_digit(10)
     }
 
+    fn is_whitespace(ch: char) -> bool {
+        ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+    }
+
     fn read_number(&mut self) -> (TokenType, String) {
         let position = self.position;
+        let mut last_was_underscore = false;
 
-        while Self::is_digit(self.ch) {
+        while Self::is_digit(self.ch) || self.ch == '_' {
+            if self.ch == '_' {
+                if last_was_underscore {
+                    while Self::is_digit(self.ch) || self.ch == '_' {
+                        self.read_char();
+                    }
+
+                    if self.ch == '.' {
+                        self.read_char();
+
+                        while Self::is_digit(self.ch) || self.ch == '_' {
+                            self.read_char();
+                        }
+                    }
+
+                    return (
+                        TokenType::Illegal,
+                        self.input[position..self.position].iter().collect(),
+                    );
+                }
+                last_was_underscore = true;
+            } else {
+                last_was_underscore = false;
+            }
             self.read_char();
+        }
+
+        if last_was_underscore && self.ch == '.' {
+            self.read_char();
+
+            while Self::is_digit(self.ch) || self.ch == '_' {
+                self.read_char();
+            }
+
+            return (
+                TokenType::Illegal,
+                self.input[position..self.position].iter().collect(),
+            );
+        }
+
+        if last_was_underscore {
+            return (
+                TokenType::Illegal,
+                self.input[position..self.position].iter().collect(),
+            );
         }
 
         if self.ch == '.' && Self::is_digit(self.peek_char()) {
             self.read_char();
 
-            while Self::is_digit(self.ch) {
+            last_was_underscore = false;
+
+            while Self::is_digit(self.ch) || self.ch == '_' {
+                if self.ch == '_' {
+                    if last_was_underscore {
+                        while Self::is_digit(self.ch) || self.ch == '_' {
+                            self.read_char();
+                        }
+                        return (
+                            TokenType::Illegal,
+                            self.input[position..self.position].iter().collect(),
+                        );
+                    }
+                    last_was_underscore = true;
+                } else {
+                    last_was_underscore = false;
+                }
                 self.read_char();
             }
 
-            (
+            if last_was_underscore {
+                return (
+                    TokenType::Illegal,
+                    self.input[position..self.position].iter().collect(),
+                );
+            }
+
+            return (
                 TokenType::Float,
                 self.input[position..self.position].iter().collect(),
-            )
-        } else {
-            (
-                TokenType::Integer,
-                self.input[position..self.position].iter().collect(),
-            )
+            );
         }
+
+        (
+            TokenType::Integer,
+            self.input[position..self.position].iter().collect(),
+        )
+    }
+}
+
+impl Iterator for Lexer {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Token> {
+        let token = self.next_token();
+        if token.token_type == TokenType::EOF {
+            None
+        } else {
+            Some(token)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Lexer;
+    use crate::token::TokenType;
+
+    fn assert_tokens(expected: Vec<(TokenType, String)>, input: &str) {
+        let tokens: Vec<_> = Lexer::new(input)
+            .map(|t| (t.token_type, t.literal))
+            .collect();
+
+        println!("Tokens: {:?}", tokens);
+
+        assert_eq!(
+            expected.len(),
+            tokens.len(),
+            "Token count mismatch. Expected {}, got {}",
+            expected.len(),
+            tokens.len()
+        );
+
+        for (i, token) in tokens.iter().enumerate() {
+            assert_eq!(expected[i], *token, "Token mismatch at index {}", i);
+        }
+    }
+
+    #[test]
+    fn binary_operators() {
+        let input = "+ - * / ** => <= == >= != < > && || !";
+
+        let expected = vec![
+            (TokenType::Plus, "+".to_string()),
+            (TokenType::Minus, "-".to_string()),
+            (TokenType::Asterisk, "*".to_string()),
+            (TokenType::Slash, "/".to_string()),
+            (TokenType::Power, "**".to_string()),
+            (TokenType::HashRocket, "=>".to_string()),
+            (TokenType::LTE, "<=".to_string()),
+            (TokenType::Eq, "==".to_string()),
+            (TokenType::GTE, ">=".to_string()),
+            (TokenType::NotEq, "!=".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::And, "&&".to_string()),
+            (TokenType::Or, "||".to_string()),
+            (TokenType::Bang, "!".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn unary_operators() {
+        let input = "!true -4";
+
+        let expected = vec![
+            (TokenType::Bang, "!".to_string()),
+            (TokenType::True, "true".to_string()),
+            (TokenType::Minus, "-".to_string()),
+            (TokenType::Integer, "4".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn plus_variations() {
+        let input = "+ ++ +a a+";
+
+        let expected = vec![
+            (TokenType::Plus, "+".to_string()),
+            (TokenType::Plus, "+".to_string()),
+            (TokenType::Plus, "+".to_string()),
+            (TokenType::Plus, "+".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Plus, "+".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn minus_variations() {
+        let input = "- -- -a a-";
+
+        let expected = vec![
+            (TokenType::Minus, "-".to_string()),
+            (TokenType::Minus, "-".to_string()),
+            (TokenType::Minus, "-".to_string()),
+            (TokenType::Minus, "-".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Minus, "-".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn asterisk_variations() {
+        let input = "* ** *a a*";
+
+        let expected = vec![
+            (TokenType::Asterisk, "*".to_string()),
+            (TokenType::Power, "**".to_string()),
+            (TokenType::Asterisk, "*".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Asterisk, "*".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn slash_variations() {
+        let input = "/ // /a a/";
+
+        let expected = vec![
+            (TokenType::Slash, "/".to_string()),
+            (TokenType::Slash, "/".to_string()),
+            (TokenType::Slash, "/".to_string()),
+            (TokenType::Slash, "/".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Slash, "/".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn power_variations() {
+        let input = "** *** **a a**";
+
+        let expected = vec![
+            (TokenType::Power, "**".to_string()),
+            (TokenType::Power, "**".to_string()),
+            (TokenType::Asterisk, "*".to_string()),
+            (TokenType::Power, "**".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Power, "**".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn hash_rocket_variations() {
+        let input = "=> ==> =>= =>> =>< <=> =>a a=>";
+
+        let expected = vec![
+            (TokenType::HashRocket, "=>".to_string()),
+            (TokenType::Eq, "==".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::HashRocket, "=>".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::HashRocket, "=>".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::HashRocket, "=>".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::LTE, "<=".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::HashRocket, "=>".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::HashRocket, "=>".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn lte_variations() {
+        let input = "<= <<= <== =<= <<= ><= <=a a<=";
+
+        let expected = vec![
+            (TokenType::LTE, "<=".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::LTE, "<=".to_string()),
+            (TokenType::LTE, "<=".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::LTE, "<=".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::LTE, "<=".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::LTE, "<=".to_string()),
+            (TokenType::LTE, "<=".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::LTE, "<=".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn equality_variations() {
+        let input = "= == === =a ==a a==";
+
+        let expected = vec![
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Eq, "==".to_string()),
+            (TokenType::Eq, "==".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Eq, "==".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Eq, "==".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn gte_variations() {
+        let input = ">= >== =>= >=< >>= >=a a>=";
+
+        let expected = vec![
+            (TokenType::GTE, ">=".to_string()),
+            (TokenType::GTE, ">=".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::HashRocket, "=>".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::GTE, ">=".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::GTE, ">=".to_string()),
+            (TokenType::GTE, ">=".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::GTE, ">=".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn lt_and_gt_variations() {
+        let input = "< << >< <> > >> <a a> <a a<";
+
+        let expected = vec![
+            (TokenType::LT, "<".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::LT, "<".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn and_variations() {
+        let input = "&& &&& &&&& &&a a&&";
+
+        let expected = vec![
+            (TokenType::And, "&&".to_string()),
+            (TokenType::And, "&&".to_string()),
+            (TokenType::Illegal, "&".to_string()),
+            (TokenType::And, "&&".to_string()),
+            (TokenType::And, "&&".to_string()),
+            (TokenType::And, "&&".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::And, "&&".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn or_variations() {
+        let input = "|| ||| |||| ||a a||";
+
+        let expected = vec![
+            (TokenType::Or, "||".to_string()),
+            (TokenType::Or, "||".to_string()),
+            (TokenType::Illegal, "|".to_string()),
+            (TokenType::Or, "||".to_string()),
+            (TokenType::Or, "||".to_string()),
+            (TokenType::Or, "||".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Or, "||".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn not_variations() {
+        let input = "! != !! !a a!";
+
+        let expected = vec![
+            (TokenType::Bang, "!".to_string()),
+            (TokenType::NotEq, "!=".to_string()),
+            (TokenType::Bang, "!".to_string()),
+            (TokenType::Bang, "!".to_string()),
+            (TokenType::Bang, "!".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a!".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn special_characters() {
+        let input = "; { } [ ] , . | a; ;a a{ {a a} }a a[ [a a] ]a a, ,a a. .a";
+
+        let expected = vec![
+            (TokenType::Semicolon, ";".to_string()),
+            (TokenType::LBrace, "{".to_string()),
+            (TokenType::RBrace, "}".to_string()),
+            (TokenType::LBrack, "[".to_string()),
+            (TokenType::RBrack, "]".to_string()),
+            (TokenType::Comma, ",".to_string()),
+            (TokenType::Dot, ".".to_string()),
+            (TokenType::Illegal, "|".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Semicolon, ";".to_string()),
+            (TokenType::Semicolon, ";".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::LBrace, "{".to_string()),
+            (TokenType::LBrace, "{".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::RBrace, "}".to_string()),
+            (TokenType::RBrace, "}".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::LBrack, "[".to_string()),
+            (TokenType::LBrack, "[".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::RBrack, "]".to_string()),
+            (TokenType::RBrack, "]".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Comma, ",".to_string()),
+            (TokenType::Comma, ",".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+            (TokenType::Dot, ".".to_string()),
+            (TokenType::Dot, ".".to_string()),
+            (TokenType::Identifier, "a".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn keywords() {
+        let input = "def do end if else elsif while return true false nil DEF DO END IF ELSE ELSIF WHILE RETURN TRUE FALSE NIL";
+
+        let expected = vec![
+            (TokenType::Def, "def".to_string()),
+            (TokenType::Do, "do".to_string()),
+            (TokenType::End, "end".to_string()),
+            (TokenType::If, "if".to_string()),
+            (TokenType::Else, "else".to_string()),
+            (TokenType::Elsif, "elsif".to_string()),
+            (TokenType::While, "while".to_string()),
+            (TokenType::Return, "return".to_string()),
+            (TokenType::True, "true".to_string()),
+            (TokenType::False, "false".to_string()),
+            (TokenType::Nil, "nil".to_string()),
+            (TokenType::Identifier, "DEF".to_string()),
+            (TokenType::Identifier, "DO".to_string()),
+            (TokenType::Identifier, "END".to_string()),
+            (TokenType::Identifier, "IF".to_string()),
+            (TokenType::Identifier, "ELSE".to_string()),
+            (TokenType::Identifier, "ELSIF".to_string()),
+            (TokenType::Identifier, "WHILE".to_string()),
+            (TokenType::Identifier, "RETURN".to_string()),
+            (TokenType::Identifier, "TRUE".to_string()),
+            (TokenType::Identifier, "FALSE".to_string()),
+            (TokenType::Identifier, "NIL".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn keywords_with_suffixes() {
+        let input = "defx endian donut iffy elsify truex falsenil nilly";
+
+        let expected = vec![
+            (TokenType::Identifier, "defx".to_string()),
+            (TokenType::Identifier, "endian".to_string()),
+            (TokenType::Identifier, "donut".to_string()),
+            (TokenType::Identifier, "iffy".to_string()),
+            (TokenType::Identifier, "elsify".to_string()),
+            (TokenType::Identifier, "truex".to_string()),
+            (TokenType::Identifier, "falsenil".to_string()),
+            (TokenType::Identifier, "nilly".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn identifiers() {
+        let c = "?".chars().next().unwrap();
+        println!("{}", c.is_alphanumeric());
+
+        let input = "_ _test test_ __private__ test! test1 1test test? !test test_1 test_! test_? 1_test !_test foo.bar.baz Hello_世界 café";
+
+        let expected = vec![
+            (TokenType::Identifier, "_".to_string()),
+            (TokenType::Identifier, "_test".to_string()),
+            (TokenType::Identifier, "test_".to_string()),
+            (TokenType::Identifier, "__private__".to_string()),
+            (TokenType::Identifier, "test!".to_string()),
+            (TokenType::Identifier, "test1".to_string()),
+            (TokenType::Integer, "1".to_string()),
+            (TokenType::Identifier, "test".to_string()),
+            (TokenType::Identifier, "test?".to_string()),
+            (TokenType::Bang, "!".to_string()),
+            (TokenType::Identifier, "test".to_string()),
+            (TokenType::Identifier, "test_1".to_string()),
+            (TokenType::Identifier, "test_!".to_string()),
+            (TokenType::Identifier, "test_?".to_string()),
+            (TokenType::Illegal, "1_".to_string()),
+            (TokenType::Identifier, "test".to_string()),
+            (TokenType::Bang, "!".to_string()),
+            (TokenType::Identifier, "_test".to_string()),
+            (TokenType::Identifier, "foo".to_string()),
+            (TokenType::Dot, ".".to_string()),
+            (TokenType::Identifier, "bar".to_string()),
+            (TokenType::Dot, ".".to_string()),
+            (TokenType::Identifier, "baz".to_string()),
+            (TokenType::Identifier, "Hello_世界".to_string()),
+            (TokenType::Identifier, "café".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn symbols() {
+        let input = ": :_ :_test :test_ :__private__ :test! :test1 :1test :test? :!test :test_1 :test_! :test_? :1_test :!_test :!!_test";
+
+        let expected = vec![
+            (TokenType::Illegal, ":".to_string()),
+            (TokenType::Symbol, ":_".to_string()),
+            (TokenType::Symbol, ":_test".to_string()),
+            (TokenType::Symbol, ":test_".to_string()),
+            (TokenType::Symbol, ":__private__".to_string()),
+            (TokenType::Symbol, ":test!".to_string()),
+            (TokenType::Symbol, ":test1".to_string()),
+            (TokenType::Illegal, ":1".to_string()),
+            (TokenType::Identifier, "test".to_string()),
+            (TokenType::Symbol, ":test?".to_string()),
+            (TokenType::Illegal, ":!".to_string()),
+            (TokenType::Identifier, "test".to_string()),
+            (TokenType::Symbol, ":test_1".to_string()),
+            (TokenType::Symbol, ":test_!".to_string()),
+            (TokenType::Symbol, ":test_?".to_string()),
+            (TokenType::Illegal, ":1_".to_string()),
+            (TokenType::Identifier, "test".to_string()),
+            (TokenType::Illegal, ":!_".to_string()),
+            (TokenType::Identifier, "test".to_string()),
+            (TokenType::Illegal, ":!!_".to_string()),
+            (TokenType::Identifier, "test".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn literals() {
+        let input =
+            "0 42 3.14 0.0 -5 -5.12 01 00 001.2 1_2_3_4 1_2_3_4.1 1.1_2_3 1_ 1._2 1_.2 1.2.3";
+
+        let expected = vec![
+            (TokenType::Integer, "0".to_string()),
+            (TokenType::Integer, "42".to_string()),
+            (TokenType::Float, "3.14".to_string()),
+            (TokenType::Float, "0.0".to_string()),
+            (TokenType::Minus, "-".to_string()),
+            (TokenType::Integer, "5".to_string()),
+            (TokenType::Minus, "-".to_string()),
+            (TokenType::Float, "5.12".to_string()),
+            (TokenType::Integer, "01".to_string()),
+            (TokenType::Integer, "00".to_string()),
+            (TokenType::Float, "001.2".to_string()),
+            (TokenType::Integer, "1_2_3_4".to_string()),
+            (TokenType::Float, "1_2_3_4.1".to_string()),
+            (TokenType::Float, "1.1_2_3".to_string()),
+            (TokenType::Illegal, "1_".to_string()),
+            (TokenType::Integer, "1".to_string()),
+            (TokenType::Dot, ".".to_string()),
+            (TokenType::Illegal, "_2".to_string()),
+            (TokenType::Illegal, "1_.2".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn strings() {
+        let input = r#""hello" "hello world" "h\"ello" "5.7" "Hello 世界" "café" ""#;
+
+        let expected = vec![
+            (TokenType::String, "\"hello\"".to_string()),
+            (TokenType::String, "\"hello world\"".to_string()),
+            (TokenType::String, "\"h\\\"ello\"".to_string()),
+            (TokenType::String, "\"5.7\"".to_string()),
+            (TokenType::String, "\"Hello 世界\"".to_string()),
+            (TokenType::String, "\"café\"".to_string()),
+            (TokenType::Illegal, "unterminated string: \"".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn unterminated_string() {
+        let input = r#""This is an unterminated string"#;
+
+        let expected = vec![(
+            TokenType::Illegal,
+            "unterminated string: \"This is an unterminated string".to_string(),
+        )];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn single_quote() {
+        let input = r#"""#;
+
+        let expected = vec![(TokenType::Illegal, "unterminated string: \"".to_string())];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn comments() {
+        let input = r#"# This is a comment
+            # This is a comment with a # inside
+            #Another comment
+            #    Indented comment
+        #"#;
+
+        let expected = vec![
+            (TokenType::Comment, "# This is a comment".to_string()),
+            (
+                TokenType::Comment,
+                "# This is a comment with a # inside".to_string(),
+            ),
+            (TokenType::Comment, "#Another comment".to_string()),
+            (TokenType::Comment, "#    Indented comment".to_string()),
+            (TokenType::Comment, "#".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn empty_input() {
+        let input = "";
+
+        assert_eq!(0, Lexer::new(input).count());
+    }
+
+    #[test]
+    fn whitespace_only() {
+        let input = "     ";
+
+        assert_eq!(0, Lexer::new(input).count());
+
+        let input = "    \n\t   \r\n  ";
+
+        assert_eq!(0, Lexer::new(input).count());
+    }
+
+    #[test]
+    fn whitespace_variations() {
+        let input = "x=5+3 x    =    5 x=\n5 x=\r\n5";
+
+        let expected = vec![
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Integer, "5".to_string()),
+            (TokenType::Plus, "+".to_string()),
+            (TokenType::Integer, "3".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Integer, "5".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Integer, "5".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Integer, "5".to_string()),
+        ];
+
+        assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn token_recognition() {
+        let input = r##"
+            # Types
+            1
+            4.0
+            :my_symbol
+            "This is a string"
+
+            # Binary Operators
+            1 + 2 * (3 - 4) / 5
+            2 ** 3
+            x == y
+            x != y
+            x >= 10
+            x <= 10
+            x < 5
+            x > 2
+
+            # Functions
+            def hello_world(name) do
+                return puts "Hello, #{name}!"
+            end
+
+            object.method_name(1)
+
+            # Control Flow
+            if x > 5 do
+                result = x + y
+            elsif y < 10 do
+                result = x - y
+            else do
+                nil
+            end
+
+            while x < 10 do
+                x = x + 1
+            end
+
+            # Boolean logic
+            true && false
+            true || false
+            !true
+
+            # Hashes
+            { name: "John", age => 30, "height" => 5.9 }
+        "##;
+
+        let expected = vec![
+            (TokenType::Comment, "# Types".to_string()),
+            (TokenType::Integer, "1".to_string()),
+            (TokenType::Float, "4.0".to_string()),
+            (TokenType::Symbol, ":my_symbol".to_string()),
+            (TokenType::String, "\"This is a string\"".to_string()),
+            (TokenType::Comment, "# Binary Operators".to_string()),
+            (TokenType::Integer, "1".to_string()),
+            (TokenType::Plus, "+".to_string()),
+            (TokenType::Integer, "2".to_string()),
+            (TokenType::Asterisk, "*".to_string()),
+            (TokenType::LParen, "(".to_string()),
+            (TokenType::Integer, "3".to_string()),
+            (TokenType::Minus, "-".to_string()),
+            (TokenType::Integer, "4".to_string()),
+            (TokenType::RParen, ")".to_string()),
+            (TokenType::Slash, "/".to_string()),
+            (TokenType::Integer, "5".to_string()),
+            (TokenType::Integer, "2".to_string()),
+            (TokenType::Power, "**".to_string()),
+            (TokenType::Integer, "3".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Eq, "==".to_string()),
+            (TokenType::Identifier, "y".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::NotEq, "!=".to_string()),
+            (TokenType::Identifier, "y".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::GTE, ">=".to_string()),
+            (TokenType::Integer, "10".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::LTE, "<=".to_string()),
+            (TokenType::Integer, "10".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::Integer, "5".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::Integer, "2".to_string()),
+            (TokenType::Comment, "# Functions".to_string()),
+            (TokenType::Def, "def".to_string()),
+            (TokenType::Identifier, "hello_world".to_string()),
+            (TokenType::LParen, "(".to_string()),
+            (TokenType::Identifier, "name".to_string()),
+            (TokenType::RParen, ")".to_string()),
+            (TokenType::Do, "do".to_string()),
+            (TokenType::Return, "return".to_string()),
+            (TokenType::Identifier, "puts".to_string()),
+            (TokenType::String, "\"Hello, #{name}!\"".to_string()),
+            (TokenType::End, "end".to_string()),
+            (TokenType::Identifier, "object".to_string()),
+            (TokenType::Dot, ".".to_string()),
+            (TokenType::Identifier, "method_name".to_string()),
+            (TokenType::LParen, "(".to_string()),
+            (TokenType::Integer, "1".to_string()),
+            (TokenType::RParen, ")".to_string()),
+            (TokenType::Comment, "# Control Flow".to_string()),
+            (TokenType::If, "if".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::GT, ">".to_string()),
+            (TokenType::Integer, "5".to_string()),
+            (TokenType::Do, "do".to_string()),
+            (TokenType::Identifier, "result".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Plus, "+".to_string()),
+            (TokenType::Identifier, "y".to_string()),
+            (TokenType::Elsif, "elsif".to_string()),
+            (TokenType::Identifier, "y".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::Integer, "10".to_string()),
+            (TokenType::Do, "do".to_string()),
+            (TokenType::Identifier, "result".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Minus, "-".to_string()),
+            (TokenType::Identifier, "y".to_string()),
+            (TokenType::Else, "else".to_string()),
+            (TokenType::Do, "do".to_string()),
+            (TokenType::Nil, "nil".to_string()),
+            (TokenType::End, "end".to_string()),
+            (TokenType::While, "while".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::LT, "<".to_string()),
+            (TokenType::Integer, "10".to_string()),
+            (TokenType::Do, "do".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Plus, "+".to_string()),
+            (TokenType::Integer, "1".to_string()),
+            (TokenType::End, "end".to_string()),
+            (TokenType::Comment, "# Boolean logic".to_string()),
+            (TokenType::True, "true".to_string()),
+            (TokenType::And, "&&".to_string()),
+            (TokenType::False, "false".to_string()),
+            (TokenType::True, "true".to_string()),
+            (TokenType::Or, "||".to_string()),
+            (TokenType::False, "false".to_string()),
+            (TokenType::Bang, "!".to_string()),
+            (TokenType::True, "true".to_string()),
+            (TokenType::Comment, "# Hashes".to_string()),
+            (TokenType::LBrace, "{".to_string()),
+            (TokenType::SymbolKey, "name:".to_string()),
+            (TokenType::String, "\"John\"".to_string()),
+            (TokenType::Comma, ",".to_string()),
+            (TokenType::Identifier, "age".to_string()),
+            (TokenType::HashRocket, "=>".to_string()),
+            (TokenType::Integer, "30".to_string()),
+            (TokenType::Comma, ",".to_string()),
+            (TokenType::String, "\"height\"".to_string()),
+            (TokenType::HashRocket, "=>".to_string()),
+            (TokenType::Float, "5.9".to_string()),
+            (TokenType::RBrace, "}".to_string()),
+        ];
+
+        assert_tokens(expected, input);
     }
 }

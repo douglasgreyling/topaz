@@ -41,12 +41,7 @@ fn main() {
         end
     "##;
 
-    let mut lexer = Lexer::new(input.to_string());
-
-    let mut token = lexer.next_token();
-
-    while token.token_type != me::token::TokenType::EOF {
+    for token in Lexer::new(input) {
         println!("{:?}", token);
-        token = lexer.next_token();
     }
 }
