@@ -1,5 +1,8 @@
 use crate::token::{Token, TokenType, lookup_identifier};
 
+const WHITESPACE_CHARS: [char; 4] = [' ', '\t', '\n', '\r'];
+const SUFFIX_CHARS: [char; 2] = ['!', '?'];
+
 pub struct Lexer {
     input: Vec<char>,
     position: usize,
@@ -38,19 +41,6 @@ impl Lexer {
             '/' => Token::new(TokenType::Slash, self.ch.to_string()),
             '#' => Token::new(TokenType::Comment, self.read_comment()),
             '\0' => Token::new(TokenType::EOF, String::new()),
-            '"' => {
-                let literal = self.read_string();
-
-                // Check if string was properly terminated (has at least opening and closing quotes)
-                if literal.len() >= 2 && literal.ends_with('"') {
-                    return Token::new(TokenType::String, literal);
-                } else {
-                    return Token::new(
-                        TokenType::Illegal,
-                        format!("unterminated string: {}", literal),
-                    );
-                }
-            }
             '=' => match self.peek_char() {
                 '=' => Token::new(TokenType::Eq, self.read_operator()),
                 '>' => Token::new(TokenType::HashRocket, self.read_operator()),
@@ -80,40 +70,22 @@ impl Lexer {
                 '|' => Token::new(TokenType::Or, self.read_operator()),
                 _ => Token::new(TokenType::Illegal, self.ch.to_string()),
             },
+            '"' => {
+                let (token_type, literal) = self.read_string();
+
+                return Token::new(token_type, literal);
+            }
             ':' => {
-                self.read_char();
+                let (token_type, literal) = self.read_symbol();
 
-                if self.ch.is_alphabetic() || self.ch == '_' {
-                    let literal = self.read_identifier();
-                    return Token::new(TokenType::Symbol, format!(":{}", literal));
-                } else if Self::is_digit(self.ch) {
-                    let position = self.position;
-                    let (_, _) = self.read_number();
-
-                    if self.ch == '!' || self.ch == '?' {
-                        self.read_char();
-                    }
-
-                    let literal: String = self.input[position..self.position].iter().collect();
-
-                    return Token::new(TokenType::Illegal, format!(":{}", literal));
-                } else if !self.ch.is_alphabetic() && !Self::is_whitespace(self.ch) {
-                    let position = self.position;
-
-                    while !self.ch.is_alphabetic() {
-                        self.read_char();
-                    }
-
-                    let literal: String = self.input[position..self.position].iter().collect();
-                    return Token::new(TokenType::Illegal, format!(":{}", literal));
-                } else {
-                    Token::new(TokenType::Illegal, ":".to_string())
-                }
+                return Token::new(token_type, literal);
             }
             _ => {
+                // Determine if it's an identifier or a number
                 if self.ch.is_alphabetic() || self.ch == '_' {
                     let literal = self.read_identifier();
 
+                    // Check for illegal identifiers starting with underscore followed by a digit
                     if literal.starts_with('_') {
                         if let Some(first_non_underscore) =
                             literal.chars().skip_while(|&c| c == '_').next()
@@ -124,14 +96,17 @@ impl Lexer {
                         }
                     }
 
+                    // Check if the identifier is followed by a colon, indicating a symbol key
                     if self.ch == ':' {
                         self.read_char(); // Advance past the colon
                         return Token::new(TokenType::SymbolKey, format!("{}:", literal));
                     }
 
+                    // Return the identifier which may also be a reserved keyword
                     return Token::new(lookup_identifier(&literal), literal);
                 } else if Self::is_digit(self.ch) {
                     let (token_type, literal) = self.read_number();
+
                     return Token::new(token_type, literal);
                 } else {
                     Token::new(TokenType::Illegal, self.ch.to_string())
@@ -144,14 +119,13 @@ impl Lexer {
     }
 
     fn skip_whitespace(&mut self) {
-        let ignoreable_whitespaces = [' ', '\t', '\n', '\r'];
-
-        while ignoreable_whitespaces.contains(&self.ch) {
+        while WHITESPACE_CHARS.contains(&self.ch) {
             self.read_char();
         }
     }
 
     fn read_char(&mut self) {
+        // Return a null character if we've reached the end of the input
         if self.input.len() <= self.read_position {
             self.ch = '\0';
         } else {
@@ -163,6 +137,7 @@ impl Lexer {
     }
 
     fn peek_char(&self) -> char {
+        // Return a null character if we've reached the end of the input
         if self.input.len() <= self.read_position {
             '\0'
         } else {
@@ -171,7 +146,9 @@ impl Lexer {
     }
 
     fn read_operator(&mut self) -> String {
-        let first_char = self.ch;
+        let first_char = self.ch; // Start with the current character
+
+        // Advance to the next character to complete the operator
         self.read_char();
 
         format!("{}{}", first_char, self.ch)
@@ -180,8 +157,9 @@ impl Lexer {
     fn read_comment(&mut self) -> String {
         let position = self.position;
 
-        self.read_char();
+        self.read_char(); // Move past the '#' character
 
+        // Read until end of line or end of file
         while self.ch != '\n' && self.ch != '\0' {
             self.read_char();
         }
@@ -189,29 +167,67 @@ impl Lexer {
         self.input[position..self.position].iter().collect()
     }
 
-    fn read_string(&mut self) -> String {
-        let position = self.position;
+    fn read_string(&mut self) -> (TokenType, String) {
+        let position = self.position; // Start position includes the opening quote
 
         loop {
             self.read_char();
 
+            // Handle escaped quotes and do not terminate the string prematurely
             if self.ch == '\\' && self.peek_char() == '"' {
-                self.read_char();
+                self.read_char(); // Skip the escaped quote
                 continue;
             }
 
+            // String ends with closing quote or unterminated at EOF
             if self.ch == '"' || self.ch == '\0' {
                 break;
             }
         }
 
+        // Move past closing quote if one is found
         if self.ch == '"' {
             self.read_char();
         }
 
-        let str_literal = self.input[position..self.position].iter().collect();
+        let literal: String = self.input[position..self.position].iter().collect();
 
-        str_literal
+        // Check if the string was properly terminated (has at least opening and closing quotes)
+        if literal.len() >= 2 && literal.ends_with('"') {
+            (TokenType::String, literal)
+        } else {
+            (
+                TokenType::Illegal,
+                format!("unterminated string: {}", literal),
+            )
+        }
+    }
+
+    fn read_symbol(&mut self) -> (TokenType, String) {
+        self.read_char(); // Start position after the ':'
+
+        if self.ch.is_alphabetic() || self.ch == '_' {
+            // Read the symbol like an identifier
+            let literal = self.read_identifier();
+
+            return (TokenType::Symbol, format!(":{}", literal));
+        } else if Self::is_digit(self.ch)
+            || (!self.ch.is_alphabetic() && !Self::is_whitespace(self.ch))
+        // If the symbol starts with a number, or some special character
+        {
+            let position = self.position;
+
+            // Read until we hit an alphabetic character or whitespace
+            while Self::is_digit(self.ch) || !self.ch.is_alphabetic() {
+                self.read_char();
+            }
+
+            let literal: String = self.input[position..self.position].iter().collect();
+
+            return (TokenType::Illegal, format!(":{}", literal));
+        } else {
+            return (TokenType::Illegal, ":".to_string());
+        }
     }
 
     fn read_identifier(&mut self) -> String {
@@ -221,7 +237,7 @@ impl Lexer {
             self.read_char();
         }
 
-        if self.ch == '!' || self.ch == '?' {
+        if SUFFIX_CHARS.contains(&self.ch) {
             self.read_char();
         }
 
@@ -233,7 +249,7 @@ impl Lexer {
     }
 
     fn is_whitespace(ch: char) -> bool {
-        ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+        WHITESPACE_CHARS.contains(&ch)
     }
 
     fn read_number(&mut self) -> (TokenType, String) {
@@ -335,6 +351,7 @@ impl Iterator for Lexer {
 
     fn next(&mut self) -> Option<Token> {
         let token = self.next_token();
+
         if token.token_type == TokenType::EOF {
             None
         } else {
@@ -857,6 +874,9 @@ mod tests {
             (TokenType::Dot, ".".to_string()),
             (TokenType::Illegal, "_2".to_string()),
             (TokenType::Illegal, "1_.2".to_string()),
+            (TokenType::Float, "1.2".to_string()),
+            (TokenType::Dot, ".".to_string()),
+            (TokenType::Integer, "3".to_string()),
         ];
 
         assert_tokens(expected, input);
