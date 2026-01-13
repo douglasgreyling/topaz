@@ -254,6 +254,7 @@ impl Lexer {
 
     fn read_number(&mut self) -> (TokenType, String) {
         let position = self.position;
+        let mut last_was_underscore = false;
 
         // Read integer part and check for errors
         let integer_part_valid = self.read_number_part();
