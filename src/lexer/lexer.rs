@@ -290,17 +290,6 @@ impl Lexer {
         if self.ch == '.' && Self::is_digit(self.peek_char()) {
             self.read_char();
 
-            // if self.ch == '_' {
-            //     while Self::is_digit(self.ch) || self.ch == '_' {
-            //         self.read_char();
-            //     }
-
-            //     return (
-            //         TokenType::Illegal,
-            //         self.input[position..self.position].iter().collect(),
-            //     );
-            // }
-
             last_was_underscore = false;
 
             while Self::is_digit(self.ch) || self.ch == '_' {
@@ -353,26 +342,6 @@ impl Iterator for Lexer {
         }
     }
 }
-
-// Number Edge Cases
-// Multiple decimals: 1.2.3 (should be 1.2, ., 3?)
-
-// String Content
-// Unicode in strings: "Hello 世界", "café"
-
-// Complex Combinations
-// Method chains: object.method.another - multiple dots
-
-// Whitespace Handling
-// No whitespace: x=5+3 (should still tokenize correctly)
-// Excessive whitespace: x    =    5 (should ignore it)
-// Newlines: Do they matter? x = \n 5 vs x = 5
-// Mixed line endings: \r\n (Windows) vs \n (Unix)
-
-// Error Recovery
-// Multiple errors: Several illegal tokens in sequence
-// Partial tokens: Input cut off mid-token
-// Invalid UTF-8: If working with bytes (probably won't happen with &str)
 
 #[cfg(test)]
 mod tests {
@@ -799,7 +768,7 @@ mod tests {
         let c = "?".chars().next().unwrap();
         println!("{}", c.is_alphanumeric());
 
-        let input = "_ _test test_ __private__ test! test1 1test test? !test test_1 test_! test_? 1_test !_test";
+        let input = "_ _test test_ __private__ test! test1 1test test? !test test_1 test_! test_? 1_test !_test foo.bar.baz Hello_世界 café";
 
         let expected = vec![
             (TokenType::Identifier, "_".to_string()),
@@ -820,6 +789,13 @@ mod tests {
             (TokenType::Identifier, "test".to_string()),
             (TokenType::Bang, "!".to_string()),
             (TokenType::Identifier, "_test".to_string()),
+            (TokenType::Identifier, "foo".to_string()),
+            (TokenType::Dot, ".".to_string()),
+            (TokenType::Identifier, "bar".to_string()),
+            (TokenType::Dot, ".".to_string()),
+            (TokenType::Identifier, "baz".to_string()),
+            (TokenType::Identifier, "Hello_世界".to_string()),
+            (TokenType::Identifier, "café".to_string()),
         ];
 
         assert_tokens(expected, input);
@@ -888,13 +864,15 @@ mod tests {
 
     #[test]
     fn strings() {
-        let input = r#""hello" "hello world" "h\"ello" "5.7" ""#;
+        let input = r#""hello" "hello world" "h\"ello" "5.7" "Hello 世界" "café" ""#;
 
         let expected = vec![
             (TokenType::String, "\"hello\"".to_string()),
             (TokenType::String, "\"hello world\"".to_string()),
             (TokenType::String, "\"h\\\"ello\"".to_string()),
             (TokenType::String, "\"5.7\"".to_string()),
+            (TokenType::String, "\"Hello 世界\"".to_string()),
+            (TokenType::String, "\"café\"".to_string()),
             (TokenType::Illegal, "unterminated string: \"".to_string()),
         ];
 
@@ -960,6 +938,30 @@ mod tests {
         let input = "    \n\t   \r\n  ";
 
         assert_eq!(0, Lexer::new(input).count());
+    }
+
+    #[test]
+    fn whitespace_variations() {
+        let input = "x=5+3 x    =    5 x=\n5 x=\r\n5";
+
+        let expected = vec![
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Integer, "5".to_string()),
+            (TokenType::Plus, "+".to_string()),
+            (TokenType::Integer, "3".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Integer, "5".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Integer, "5".to_string()),
+            (TokenType::Identifier, "x".to_string()),
+            (TokenType::Assign, "=".to_string()),
+            (TokenType::Integer, "5".to_string()),
+        ];
+
+        assert_tokens(expected, input);
     }
 
     #[test]
