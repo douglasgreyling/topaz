@@ -1,1 +1,6 @@
 /target
+
+# Hugo build directories
+/docs/public/
+/docs/resources/_gen/
+/docs/.hugo_build.lock
