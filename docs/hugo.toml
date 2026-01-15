@@ -1,0 +1,57 @@
+baseURL = 'https://douglasgreyling.github.io/topaz/'
+languageCode = 'en-us'
+title = 'Topaz'
+theme = 'PaperMod'
+
+# Publishing directory for GitHub Pages
+publishDir = "public"
+
+[params]
+  description = "A blog about Topaz - a programming language"
+
+  # Force light mode - disable dark mode
+  defaultTheme = "light"
+  disableThemeToggle = true
+
+  # Logo configuration
+  [params.label]
+    text = "Topaz"
+    icon = "/topaz/logo.png"
+    iconHeight = 35
+
+  # Show post summaries on home
+  showPostNavLinks = true
+  showBreadCrumbs = true
+  showReadingTime = true
+  showShareButtons = false
+
+  # Ocean blue theme colors
+  [params.assets]
+    disableHLJS = false
+
+  [params.homeInfoParams]
+    Title = "Welcome to Topaz"
+    Content = "A hobby project seeking to create a language similar to Ruby"
+
+[params.profileMode]
+  enabled = false
+
+# Menu items
+[[menu.main]]
+  name = "Home"
+  url = "/"
+  weight = 10
+
+[[menu.main]]
+  name = "Posts"
+  url = "/posts/"
+  weight = 20
+
+[[menu.main]]
+  name = "Tags"
+  url = "/tags/"
+  weight = 30
+
+# Output formats
+[outputs]
+  home = ["HTML", "RSS", "JSON"]

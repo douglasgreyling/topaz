@@ -36,7 +36,7 @@ fn main() {
         # Method call
         object.method_name
 
-        if x > 5 && y < 10
+        if x > 5 && y < 10 do
           result = x + y
         end
     "##;
