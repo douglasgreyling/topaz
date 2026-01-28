@@ -1,19 +1,25 @@
 #[derive(Debug)]
-pub struct Token<'a> {
+pub struct Token {
+    pub start: usize,
+    pub end: usize,
     pub token_type: TokenType,
-    pub literal: &'a str,
 }
 
-impl<'a> Token<'a> {
-    pub fn new(token_type: TokenType, literal: &'a str) -> Self {
+impl Token {
+    pub fn new(token_type: TokenType, start: usize, end: usize) -> Self {
         Token {
+            start,
+            end,
             token_type,
-            literal,
         }
+    }
+
+    pub fn lexeme<'a>(&self, source: &'a str) -> &'a str {
+        &source[self.start..self.end]
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TokenType {
     Illegal,
     EOF,
