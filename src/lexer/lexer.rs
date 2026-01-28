@@ -1,7 +1,7 @@
 use crate::token::{Token, TokenType, lookup_identifier};
 
-const WHITESPACE_CHARS: [char; 4] = [' ', '\t', '\n', '\r'];
 const SUFFIX_CHARS: [char; 2] = ['!', '?'];
+const ESCAPABLE_CHARS: [char; 8] = ['n', 'r', 't', '\\', '"', '0', 'a', 'b'];
 
 pub struct Lexer<'a> {
     input: &'a str,
@@ -23,113 +23,63 @@ impl<'a> Lexer<'a> {
         lexer
     }
 
-    pub fn next_token(&mut self) -> Token<'a> {
+    /// Returns the next token from the input.
+    pub fn next_token(&mut self) -> Token {
         self.skip_whitespace();
 
         let token = match self.ch {
-            '\0' => Token::new(TokenType::EOF, ""),
-            '(' => Token::new(
-                TokenType::LParen,
-                &self.input[self.position..self.position + 1],
-            ),
-            ')' => Token::new(
-                TokenType::RParen,
-                &self.input[self.position..self.position + 1],
-            ),
-            '{' => Token::new(
-                TokenType::LBrace,
-                &self.input[self.position..self.position + 1],
-            ),
-            '}' => Token::new(
-                TokenType::RBrace,
-                &self.input[self.position..self.position + 1],
-            ),
-            '[' => Token::new(
-                TokenType::LBrack,
-                &self.input[self.position..self.position + 1],
-            ),
-            ']' => Token::new(
-                TokenType::RBrack,
-                &self.input[self.position..self.position + 1],
-            ),
-            ',' => Token::new(
-                TokenType::Comma,
-                &self.input[self.position..self.position + 1],
-            ),
-            ';' => Token::new(
-                TokenType::Semicolon,
-                &self.input[self.position..self.position + 1],
-            ),
-            '.' => Token::new(
-                TokenType::Dot,
-                &self.input[self.position..self.position + 1],
-            ),
-            '+' => Token::new(
-                TokenType::Plus,
-                &self.input[self.position..self.position + 1],
-            ),
-            '-' => Token::new(
-                TokenType::Minus,
-                &self.input[self.position..self.position + 1],
-            ),
-            '/' => Token::new(
-                TokenType::Slash,
-                &self.input[self.position..self.position + 1],
-            ),
-            '#' => Token::new(TokenType::Comment, self.read_comment()),
+            '\0' => Token::new(TokenType::EOF, self.position, self.position),
+            '(' => Token::new(TokenType::LParen, self.position, self.position + 1),
+            ')' => Token::new(TokenType::RParen, self.position, self.position + 1),
+            '{' => Token::new(TokenType::LBrace, self.position, self.position + 1),
+            '}' => Token::new(TokenType::RBrace, self.position, self.position + 1),
+            '[' => Token::new(TokenType::LBrack, self.position, self.position + 1),
+            ']' => Token::new(TokenType::RBrack, self.position, self.position + 1),
+            ',' => Token::new(TokenType::Comma, self.position, self.position + 1),
+            ';' => Token::new(TokenType::Semicolon, self.position, self.position + 1),
+            '.' => Token::new(TokenType::Dot, self.position, self.position + 1),
+            '+' => Token::new(TokenType::Plus, self.position, self.position + 1),
+            '-' => Token::new(TokenType::Minus, self.position, self.position + 1),
+            '/' => Token::new(TokenType::Slash, self.position, self.position + 1),
+            '#' => Token::new(TokenType::Comment, self.position, self.read_comment()),
             '=' => match self.peek_ascii_char() {
-                '=' => Token::new(TokenType::Eq, self.read_operator()),
-                '>' => Token::new(TokenType::HashRocket, self.read_operator()),
-                _ => Token::new(
-                    TokenType::Assign,
-                    &self.input[self.position..self.position + 1],
-                ),
+                '=' => Token::new(TokenType::Eq, self.position, self.read_operator()),
+                '>' => Token::new(TokenType::HashRocket, self.position, self.read_operator()),
+                _ => Token::new(TokenType::Assign, self.position, self.position + 1),
             },
             '!' => match self.peek_ascii_char() {
-                '=' => Token::new(TokenType::NotEq, self.read_operator()),
-                _ => Token::new(
-                    TokenType::Bang,
-                    &self.input[self.position..self.position + 1],
-                ),
+                '=' => Token::new(TokenType::NotEq, self.position, self.read_operator()),
+                _ => Token::new(TokenType::Bang, self.position, self.position + 1),
             },
             '<' => match self.peek_ascii_char() {
-                '=' => Token::new(TokenType::LTE, self.read_operator()),
-                _ => Token::new(TokenType::LT, &self.input[self.position..self.position + 1]),
+                '=' => Token::new(TokenType::LTE, self.position, self.read_operator()),
+                _ => Token::new(TokenType::LT, self.position, self.position + 1),
             },
             '>' => match self.peek_ascii_char() {
-                '=' => Token::new(TokenType::GTE, self.read_operator()),
-                _ => Token::new(TokenType::GT, &self.input[self.position..self.position + 1]),
+                '=' => Token::new(TokenType::GTE, self.position, self.read_operator()),
+                _ => Token::new(TokenType::GT, self.position, self.position + 1),
             },
             '*' => match self.peek_ascii_char() {
-                '*' => Token::new(TokenType::Power, self.read_operator()),
-                _ => Token::new(
-                    TokenType::Asterisk,
-                    &self.input[self.position..self.position + 1],
-                ),
+                '*' => Token::new(TokenType::Power, self.position, self.read_operator()),
+                _ => Token::new(TokenType::Asterisk, self.position, self.position + 1),
             },
             '&' => match self.peek_ascii_char() {
-                '&' => Token::new(TokenType::And, self.read_operator()),
-                _ => Token::new(
-                    TokenType::Illegal,
-                    &self.input[self.position..self.position + 1],
-                ),
+                '&' => Token::new(TokenType::And, self.position, self.read_operator()),
+                _ => Token::new(TokenType::Illegal, self.position, self.position + 1),
             },
             '|' => match self.peek_ascii_char() {
-                '|' => Token::new(TokenType::Or, self.read_operator()),
-                _ => Token::new(
-                    TokenType::Illegal,
-                    &self.input[self.position..self.position + 1],
-                ),
+                '|' => Token::new(TokenType::Or, self.position, self.read_operator()),
+                _ => Token::new(TokenType::Illegal, self.position, self.position + 1),
             },
             '"' => {
-                let (token_type, literal) = self.read_string();
+                let (token_type, start) = self.read_string();
 
-                return Token::new(token_type, literal);
+                return Token::new(token_type, start, self.position);
             }
             ':' => {
-                let (token_type, literal) = self.read_symbol();
+                let (token_type, start) = self.read_symbol();
 
-                return Token::new(token_type, literal);
+                return Token::new(token_type, start, self.position);
             }
             _ => {
                 // Determine if it's an identifier or a number
@@ -143,7 +93,7 @@ impl<'a> Lexer<'a> {
                             literal.chars().skip_while(|&c| c == '_').next()
                         {
                             if first_non_underscore.is_numeric() {
-                                return Token::new(TokenType::Illegal, literal);
+                                return Token::new(TokenType::Illegal, start, self.position);
                             }
                         }
                     }
@@ -152,20 +102,17 @@ impl<'a> Lexer<'a> {
                     if self.ch == ':' {
                         self.read_ascii_char(); // Advance past the colon
 
-                        return Token::new(TokenType::SymbolKey, &self.input[start..self.position]);
+                        return Token::new(TokenType::SymbolKey, start, self.position);
                     }
 
                     // Return the identifier which may also be a reserved keyword
-                    return Token::new(lookup_identifier(&literal), literal);
+                    return Token::new(lookup_identifier(&literal), start, self.position);
                 } else if Self::is_digit(self.ch) {
-                    let (token_type, literal) = self.read_number();
+                    let (token_type, start) = self.read_number();
 
-                    return Token::new(token_type, literal);
+                    return Token::new(token_type, start, self.position);
                 } else {
-                    Token::new(
-                        TokenType::Illegal,
-                        &self.input[self.position..self.position + 1],
-                    )
+                    Token::new(TokenType::Illegal, self.position, self.position + 1)
                 }
             }
         };
@@ -174,26 +121,33 @@ impl<'a> Lexer<'a> {
         token
     }
 
+    /// Reads characters until a non-whitespace character is found.
     fn skip_whitespace(&mut self) {
-        while WHITESPACE_CHARS.contains(&self.ch) {
+        while Self::is_whitespace(self.ch) {
             self.read_char();
         }
     }
 
+    /// Reads the next character and advances the lexer's positions.
+    /// Handles both ASCII and Unicode characters.
     pub fn read_char(&mut self) {
         if self.read_position >= self.input.len() {
             self.ch = '\0';
-        } else {
-            self.ch = self.input.as_bytes()[self.read_position] as char;
+            self.position = self.read_position;
+            return;
         }
 
-        if self.ch.is_ascii() {
+        let byte = self.input.as_bytes()[self.read_position];
+
+        // ASCII butes are always < 128
+        if byte < 128 {
             self.read_ascii_char();
         } else {
             self.read_unicode_char();
         }
     }
 
+    /// Reads the next ASCII character and advances the lexer's positions.
     pub fn read_ascii_char(&mut self) {
         if self.read_position >= self.input.len() {
             self.ch = '\0';
@@ -205,7 +159,8 @@ impl<'a> Lexer<'a> {
         self.read_position += 1;
     }
 
-    pub fn read_unicode_char(&mut self) {
+    /// Reads the next Unicode character and advances the lexer's positions.
+    fn read_unicode_char(&mut self) {
         if self.read_position >= self.input.len() {
             self.ch = '\0';
             self.position = self.read_position;
@@ -223,6 +178,8 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Peeks at the next ASCII character without advancing the lexer's position.
+    /// Returns the next character or '\0' if at the end of input.
     pub fn peek_ascii_char(&self) -> char {
         if self.read_position >= self.input.len() {
             '\0'
@@ -231,6 +188,8 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Peeks at the next Unicode character without advancing the lexer's position.
+    /// Returns the next character or '\0' if at the end of input.
     pub fn peek_unicode_char(&self) -> char {
         if self.read_position >= self.input.len() {
             return '\0';
@@ -245,44 +204,36 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_operator(&mut self) -> &'a str {
-        let start = self.position;
-
+    /// Reads an operator, which may be a single or multi-character operator.
+    /// Returns the position after reading the operator.
+    fn read_operator(&mut self) -> usize {
         // Advance to the next character to complete the operator
         self.read_ascii_char();
 
-        &self.input[start..self.position + 1]
+        self.position + 1
     }
 
-    fn read_comment(&mut self) -> &'a str {
-        let start = self.position;
-
-        // Get everything from current position to end
-        let remaining = &self.input[self.position..];
-        let mut chars = remaining.chars();
-
-        // Consume characters until end of line or end of input
-        while let Some(ch) = chars.next() {
-            if ch == '\n' {
-                break;
-            }
-
-            self.read_unicode_char();
+    /// Reads a comment until the end of the line or end of file.
+    /// Returns the position after reading the comment.
+    fn read_comment(&mut self) -> usize {
+        while self.ch != '\n' && self.ch != '\0' {
+            self.read_char();
         }
 
-        // Return slice from start to current position
-        &self.input[start..self.position]
+        self.position
     }
 
-    fn read_string(&mut self) -> (TokenType, &'a str) {
-        let position = self.position; // Start position includes the opening quote
+    /// Reads a string literal, handling escaped quotes.
+    /// Returns the TokenType and the start position of the string.
+    fn read_string(&mut self) -> (TokenType, usize) {
+        let start = self.position;
 
         loop {
-            self.read_unicode_char();
+            self.read_char();
 
             // Handle escaped quotes and do not terminate the string prematurely
-            if self.ch == '\\' && self.peek_unicode_char() == '"' {
-                self.read_unicode_char(); // Skip the escaped quote
+            if self.ch == '\\' && ESCAPABLE_CHARS.contains(&self.peek_unicode_char()) {
+                self.read_char(); // Skip the escaped character
                 continue;
             }
 
@@ -292,69 +243,74 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        // Move past closing quote if one is found
         if self.ch == '"' {
-            self.read_unicode_char();
-        }
+            self.read_char();
 
-        let literal = &self.input[position..self.position];
-
-        // Check if the string was properly terminated (has at least opening and closing quotes)
-        if literal.len() >= 2 && literal.ends_with('"') {
-            (TokenType::String, literal)
+            (TokenType::String, start)
         } else {
-            (TokenType::Illegal, literal)
+            (TokenType::Illegal, start)
         }
     }
 
-    fn read_symbol(&mut self) -> (TokenType, &'a str) {
+    /// Reads a symbol.
+    /// Returns the TokenType and the start position of the symbol.
+    fn read_symbol(&mut self) -> (TokenType, usize) {
         let start = self.position;
-        self.read_unicode_char(); // Start position after the ':'
+
+        self.read_char(); // Start position after the ':'
 
         if self.ch.is_alphabetic() || self.ch == '_' {
             // Read the symbol like an identifier
             self.read_identifier();
 
-            return (TokenType::Symbol, &self.input[start..self.position]);
+            (TokenType::Symbol, start)
         } else if Self::is_digit(self.ch)
             || (!self.ch.is_alphabetic() && !Self::is_whitespace(self.ch))
         // If the symbol starts with a number, or some special character
         {
             // Read until we hit an alphabetic character or whitespace
             while Self::is_digit(self.ch) || !self.ch.is_alphabetic() {
-                self.read_unicode_char();
+                self.read_char();
             }
 
-            return (TokenType::Illegal, &self.input[start..self.position]);
+            (TokenType::Illegal, start)
         } else {
-            return (TokenType::Illegal, &self.input[start..self.position]);
+            (TokenType::Illegal, start)
         }
     }
 
+    /// Reads an identifier from the input.
+    /// Returns the identifier as a &str slice.
     fn read_identifier(&mut self) -> &'a str {
         let position = self.position;
 
         while self.ch.is_alphanumeric() || self.ch == '_' {
-            self.read_unicode_char();
+            self.read_char();
         }
 
         if SUFFIX_CHARS.contains(&self.ch) {
-            self.read_unicode_char();
+            self.read_char();
         }
 
         &self.input[position..self.position]
     }
 
+    /// Determines if a character is a digit (0-9).
+    #[inline]
     fn is_digit(ch: char) -> bool {
-        ch.is_digit(10)
+        ch.is_ascii_digit()
     }
 
+    /// Determines if a character is a whitespace character.
+    #[inline]
     fn is_whitespace(ch: char) -> bool {
-        WHITESPACE_CHARS.contains(&ch)
+        matches!(ch, ' ' | '\t' | '\n' | '\r')
     }
 
-    fn read_number(&mut self) -> (TokenType, &'a str) {
-        let position = self.position;
+    /// Reads a number (integer or float).
+    /// Returns its TokenType and start position.
+    fn read_number(&mut self) -> (TokenType, usize) {
+        let start = self.position;
 
         // Read integer part and check for errors
         let integer_part_valid = self.read_number_part();
@@ -365,21 +321,17 @@ impl<'a> Lexer<'a> {
 
             let decimal_part_valid = self.read_number_part();
 
-            let literal = &self.input[position..self.position];
-
             if integer_part_valid && decimal_part_valid {
-                return (TokenType::Float, literal);
+                return (TokenType::Float, start);
             } else {
-                return (TokenType::Illegal, literal);
+                return (TokenType::Illegal, start);
             }
         }
 
-        let literal = &self.input[position..self.position];
-
         if integer_part_valid {
-            (TokenType::Integer, literal)
+            (TokenType::Integer, start)
         } else {
-            (TokenType::Illegal, literal)
+            (TokenType::Illegal, start)
         }
     }
 
@@ -415,9 +367,9 @@ impl<'a> Lexer<'a> {
 }
 
 impl<'a> Iterator for Lexer<'a> {
-    type Item = Token<'a>;
+    type Item = Token;
 
-    fn next(&mut self) -> Option<Token<'a>> {
+    fn next(&mut self) -> Option<Token> {
         let token = self.next_token();
 
         if token.token_type == TokenType::EOF {
@@ -435,7 +387,7 @@ mod tests {
 
     fn assert_tokens(expected: Vec<(TokenType, &str)>, input: &str) {
         let tokens: Vec<_> = Lexer::new(input)
-            .map(|t| (t.token_type, t.literal))
+            .map(|t| (t.token_type, t.lexeme(input)))
             .collect();
 
         assert_eq!(
