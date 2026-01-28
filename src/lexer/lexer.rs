@@ -19,7 +19,7 @@ impl<'a> Lexer<'a> {
             ch: '\0',
         };
 
-        lexer.read_ascii_char();
+        lexer.read_char();
         lexer
     }
 
@@ -170,13 +170,27 @@ impl<'a> Lexer<'a> {
             }
         };
 
-        self.read_ascii_char();
+        self.read_char();
         token
     }
 
     fn skip_whitespace(&mut self) {
         while WHITESPACE_CHARS.contains(&self.ch) {
+            self.read_char();
+        }
+    }
+
+    pub fn read_char(&mut self) {
+        if self.read_position >= self.input.len() {
+            self.ch = '\0';
+        } else {
+            self.ch = self.input.as_bytes()[self.read_position] as char;
+        }
+
+        if self.ch.is_ascii() {
             self.read_ascii_char();
+        } else {
+            self.read_unicode_char();
         }
     }
 
@@ -195,8 +209,6 @@ impl<'a> Lexer<'a> {
         if self.read_position >= self.input.len() {
             self.ch = '\0';
             self.position = self.read_position;
-
-            return;
         } else {
             let slice = &self.input[self.read_position..];
 
