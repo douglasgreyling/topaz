@@ -3,11 +3,49 @@ use crate::token::{Token, TokenType, lookup_identifier};
 const SUFFIX_CHARS: [char; 2] = ['!', '?'];
 const ESCAPABLE_CHARS: [char; 8] = ['n', 'r', 't', '\\', '"', '0', 'a', 'b'];
 
+pub enum LexerErrorType {
+    UnexpectedCharacter,
+    UnterminatedString,
+    InvalidNumber,
+    InvalidSymbol,
+}
+
+pub struct LexerError {
+    pub token: Token,
+    pub error: LexerErrorType,
+}
+
+impl LexerError {
+    pub fn new(token: Token, error: LexerErrorType) -> Self {
+        LexerError { token, error }
+    }
+
+    pub fn message(&self, source: &str) -> String {
+        match self.error {
+            LexerErrorType::UnexpectedCharacter => {
+                format!("Unexpected character: {:?}", self.token.lexeme(source))
+            }
+            LexerErrorType::InvalidNumber => {
+                format!("Invalid number format: {:?}", self.token.lexeme(source))
+            }
+            LexerErrorType::UnterminatedString => {
+                format!("Unterminated string: {:?}", self.token.lexeme(source))
+            }
+            LexerErrorType::InvalidSymbol => {
+                format!("Invalid symbol format: {:?}", self.token.lexeme(source))
+            }
+        }
+    }
+}
+
 pub struct Lexer<'a> {
     input: &'a str,
     position: usize,
     read_position: usize,
     ch: char,
+    line: usize,
+    column: usize,
+    errors: Vec<LexerError>,
 }
 
 impl<'a> Lexer<'a> {
@@ -17,10 +55,28 @@ impl<'a> Lexer<'a> {
             position: 0,
             read_position: 0,
             ch: '\0',
+            line: 1,
+            column: 0,
+            errors: Vec::new(),
         };
 
         lexer.read_char();
         lexer
+    }
+
+    /// Returns the current line number (1-indexed).
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    /// Returns the current column number (1-indexed after first character is read).
+    pub fn column(&self) -> usize {
+        self.column
+    }
+
+    /// Returns a slice of all errors encountered during lexing.
+    pub fn errors(&self) -> &[LexerError] {
+        &self.errors
     }
 
     /// Returns the next token from the input.
@@ -65,21 +121,35 @@ impl<'a> Lexer<'a> {
             },
             '&' => match self.peek_ascii_char() {
                 '&' => Token::new(TokenType::And, self.position, self.read_operator()),
-                _ => Token::new(TokenType::Illegal, self.position, self.position + 1),
+                _ => self.record_illegal_token(
+                    self.position,
+                    self.position + 1,
+                    LexerErrorType::UnexpectedCharacter,
+                ),
             },
             '|' => match self.peek_ascii_char() {
                 '|' => Token::new(TokenType::Or, self.position, self.read_operator()),
-                _ => Token::new(TokenType::Illegal, self.position, self.position + 1),
+                _ => self.record_illegal_token(
+                    self.position,
+                    self.position + 1,
+                    LexerErrorType::UnexpectedCharacter,
+                ),
             },
             '"' => {
-                let (token_type, start) = self.read_string();
-
-                return Token::new(token_type, start, self.position);
+                return match self.read_string() {
+                    Ok(start) => Token::new(TokenType::String, start, self.position),
+                    Err((error_type, start)) => {
+                        self.record_illegal_token(start, self.position, error_type)
+                    }
+                };
             }
             ':' => {
-                let (token_type, start) = self.read_symbol();
-
-                return Token::new(token_type, start, self.position);
+                return match self.read_symbol() {
+                    Ok(start) => Token::new(TokenType::Symbol, start, self.position),
+                    Err((error_type, start)) => {
+                        self.record_illegal_token(start, self.position, error_type)
+                    }
+                };
             }
             _ => {
                 // Determine if it's an identifier or a number
@@ -93,7 +163,11 @@ impl<'a> Lexer<'a> {
                             literal.chars().skip_while(|&c| c == '_').next()
                         {
                             if first_non_underscore.is_numeric() {
-                                return Token::new(TokenType::Illegal, start, self.position);
+                                return self.record_illegal_token(
+                                    start,
+                                    self.position,
+                                    LexerErrorType::InvalidNumber,
+                                );
                             }
                         }
                     }
@@ -108,11 +182,18 @@ impl<'a> Lexer<'a> {
                     // Return the identifier which may also be a reserved keyword
                     return Token::new(lookup_identifier(&literal), start, self.position);
                 } else if Self::is_digit(self.ch) {
-                    let (token_type, start) = self.read_number();
-
-                    return Token::new(token_type, start, self.position);
+                    return match self.read_number() {
+                        Ok((token_type, start)) => Token::new(token_type, start, self.position),
+                        Err((error_type, start)) => {
+                            return self.record_illegal_token(start, self.position, error_type);
+                        }
+                    };
                 } else {
-                    Token::new(TokenType::Illegal, self.position, self.position + 1)
+                    self.record_illegal_token(
+                        self.position,
+                        self.position + 1,
+                        LexerErrorType::UnexpectedCharacter,
+                    )
                 }
             }
         };
@@ -128,9 +209,26 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Takes a start position, end position, and error type to create an illegal token and record the error.
+    /// Returns the illegal token.
+    fn record_illegal_token(&mut self, start: usize, end: usize, error: LexerErrorType) -> Token {
+        let token = Token::new(TokenType::Illegal, start, end);
+        self.errors.push(LexerError::new(token, error));
+
+        token
+    }
+
     /// Reads the next character and advances the lexer's positions.
     /// Handles both ASCII and Unicode characters.
     pub fn read_char(&mut self) {
+        // If the previous character was a newline, move to the next line
+        // before reading the new character. This ensures newlines are
+        // tracked as the last character of their line, not the first of the next.
+        if self.ch == '\n' {
+            self.line += 1;
+            self.column = 0;
+        }
+
         if self.read_position >= self.input.len() {
             self.ch = '\0';
             self.position = self.read_position;
@@ -139,7 +237,7 @@ impl<'a> Lexer<'a> {
 
         let byte = self.input.as_bytes()[self.read_position];
 
-        // ASCII butes are always < 128
+        // ASCII bytes are always < 128
         if byte < 128 {
             self.read_ascii_char();
         } else {
@@ -155,6 +253,7 @@ impl<'a> Lexer<'a> {
             self.ch = self.input.as_bytes()[self.read_position] as char;
         }
 
+        self.column += 1;
         self.position = self.read_position;
         self.read_position += 1;
     }
@@ -176,6 +275,8 @@ impl<'a> Lexer<'a> {
                 self.position = self.read_position;
             }
         }
+
+        self.column += 1;
     }
 
     /// Peeks at the next ASCII character without advancing the lexer's position.
@@ -225,7 +326,7 @@ impl<'a> Lexer<'a> {
 
     /// Reads a string literal, handling escaped quotes.
     /// Returns the TokenType and the start position of the string.
-    fn read_string(&mut self) -> (TokenType, usize) {
+    fn read_string(&mut self) -> Result<usize, (LexerErrorType, usize)> {
         let start = self.position;
 
         loop {
@@ -246,15 +347,15 @@ impl<'a> Lexer<'a> {
         if self.ch == '"' {
             self.read_char();
 
-            (TokenType::String, start)
+            Ok(start)
         } else {
-            (TokenType::Illegal, start)
+            Err((LexerErrorType::UnterminatedString, start))
         }
     }
 
     /// Reads a symbol.
     /// Returns the TokenType and the start position of the symbol.
-    fn read_symbol(&mut self) -> (TokenType, usize) {
+    fn read_symbol(&mut self) -> Result<usize, (LexerErrorType, usize)> {
         let start = self.position;
 
         self.read_char(); // Start position after the ':'
@@ -263,19 +364,19 @@ impl<'a> Lexer<'a> {
             // Read the symbol like an identifier
             self.read_identifier();
 
-            (TokenType::Symbol, start)
+            Ok(start)
         } else if Self::is_digit(self.ch)
-            || (!self.ch.is_alphabetic() && !Self::is_whitespace(self.ch))
+            || (self.ch != '\0' && !self.ch.is_alphabetic() && !Self::is_whitespace(self.ch))
         // If the symbol starts with a number, or some special character
         {
-            // Read until we hit an alphabetic character or whitespace
-            while Self::is_digit(self.ch) || !self.ch.is_alphabetic() {
+            // Read until we hit an alphabetic character, whitespace, or EOF
+            while self.ch != '\0' && !Self::is_whitespace(self.ch) && !self.ch.is_alphabetic() {
                 self.read_char();
             }
 
-            (TokenType::Illegal, start)
+            Err((LexerErrorType::InvalidSymbol, start))
         } else {
-            (TokenType::Illegal, start)
+            Err((LexerErrorType::InvalidSymbol, start))
         }
     }
 
@@ -309,7 +410,7 @@ impl<'a> Lexer<'a> {
 
     /// Reads a number (integer or float).
     /// Returns its TokenType and start position.
-    fn read_number(&mut self) -> (TokenType, usize) {
+    fn read_number(&mut self) -> Result<(TokenType, usize), (LexerErrorType, usize)> {
         let start = self.position;
 
         // Read integer part and check for errors
@@ -322,16 +423,16 @@ impl<'a> Lexer<'a> {
             let decimal_part_valid = self.read_number_part();
 
             if integer_part_valid && decimal_part_valid {
-                return (TokenType::Float, start);
+                return Ok((TokenType::Float, start));
             } else {
-                return (TokenType::Illegal, start);
+                return Err((LexerErrorType::InvalidNumber, start));
             }
         }
 
         if integer_part_valid {
-            (TokenType::Integer, start)
+            Ok((TokenType::Integer, start))
         } else {
-            (TokenType::Illegal, start)
+            Err((LexerErrorType::InvalidNumber, start))
         }
     }
 
@@ -382,7 +483,7 @@ impl<'a> Iterator for Lexer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::Lexer;
+    use super::{Lexer, LexerErrorType};
     use crate::token::TokenType;
 
     fn assert_tokens(expected: Vec<(TokenType, &str)>, input: &str) {
@@ -1158,5 +1259,332 @@ mod tests {
         ];
 
         assert_tokens(expected, input);
+    }
+
+    #[test]
+    fn position_tracking_single_line() {
+        let input = "abc";
+        let mut lexer = Lexer::new(input);
+
+        // After initialization, we've read 'a', so column is 1
+        assert_eq!(lexer.line(), 1);
+        assert_eq!(lexer.column(), 1);
+
+        lexer.next_token(); // consumes "abc", stops at EOF
+
+        assert_eq!(lexer.line(), 1);
+        assert_eq!(lexer.column(), 3); // EOF doesn't increment column
+    }
+
+    #[test]
+    fn position_tracking_newlines() {
+        let input = "a\nb\nc";
+        let mut lexer = Lexer::new(input);
+
+        assert_eq!(lexer.line(), 1);
+        assert_eq!(lexer.column(), 1);
+
+        // After reading "a", lexer advances to '\n' which stays on line 1
+        // (newline is the last char of the current line, not first of the next)
+        lexer.next_token(); // "a"
+        assert_eq!(lexer.line(), 1);
+        assert_eq!(lexer.column(), 2); // '\n' is at line 1, column 2
+
+        // skip_whitespace reads past '\n' (incrementing line), then "b" advances to next '\n'
+        lexer.next_token(); // "b"
+        assert_eq!(lexer.line(), 2);
+        assert_eq!(lexer.column(), 2); // '\n' is at line 2, column 2
+
+        // skip_whitespace reads past '\n' (incrementing line), then "c" advances to EOF
+        lexer.next_token(); // "c"
+        assert_eq!(lexer.line(), 3);
+        assert_eq!(lexer.column(), 1); // EOF doesn't increment
+    }
+
+    #[test]
+    fn position_tracking_unicode() {
+        let input = "Hello_世界";
+        let mut lexer = Lexer::new(input);
+
+        assert_eq!(lexer.line(), 1);
+        assert_eq!(lexer.column(), 1);
+
+        lexer.next_token(); // "Hello_世界"
+
+        // Column tracks character count, not byte count
+        // "Hello_世界" is 8 characters, EOF doesn't increment
+        assert_eq!(lexer.line(), 1);
+        assert_eq!(lexer.column(), 8);
+    }
+
+    #[test]
+    fn position_tracking_unicode_multiline() {
+        let input = "café\n世界";
+        let mut lexer = Lexer::new(input);
+
+        // "café" is 4 chars, then advances to '\n' which stays on line 1
+        lexer.next_token(); // "café"
+        assert_eq!(lexer.line(), 1);
+        assert_eq!(lexer.column(), 5); // '\n' is at line 1, column 5
+
+        // skip_whitespace moves past '\n' (incrementing line), reads "世界" (2 chars), stops at EOF
+        lexer.next_token(); // "世界"
+        assert_eq!(lexer.line(), 2);
+        assert_eq!(lexer.column(), 2);
+    }
+
+    #[test]
+    fn position_tracking_with_operators() {
+        let input = "x == y";
+        let mut lexer = Lexer::new(input);
+
+        // "x" read, advances to ' ' (column=2)
+        lexer.next_token(); // "x"
+        assert_eq!(lexer.column(), 2);
+
+        // skip_whitespace to '=', read "==", advances past (column=5)
+        lexer.next_token(); // "=="
+        assert_eq!(lexer.column(), 5);
+
+        // skip_whitespace to 'y', read "y", advances to EOF (column=6, no increment)
+        lexer.next_token(); // "y"
+        assert_eq!(lexer.column(), 6);
+    }
+
+    #[test]
+    fn position_tracking_with_string() {
+        let input = "\"hello\"";
+        let mut lexer = Lexer::new(input);
+
+        // String is 7 chars, advances to EOF (no increment)
+        lexer.next_token(); // "\"hello\""
+        assert_eq!(lexer.line(), 1);
+        assert_eq!(lexer.column(), 7);
+    }
+
+    #[test]
+    fn error_unexpected_character_single_ampersand() {
+        let input = "&";
+        let mut lexer = Lexer::new(input);
+
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::Illegal);
+        assert_eq!(token.lexeme(input), "&");
+
+        let errors = lexer.errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0].error,
+            LexerErrorType::UnexpectedCharacter
+        ));
+        assert_eq!(errors[0].message(input), "Unexpected character: \"&\"");
+    }
+
+    #[test]
+    fn error_unexpected_character_single_pipe() {
+        let input = "|";
+        let mut lexer = Lexer::new(input);
+
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::Illegal);
+        assert_eq!(token.lexeme(input), "|");
+
+        let errors = lexer.errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0].error,
+            LexerErrorType::UnexpectedCharacter
+        ));
+    }
+
+    #[test]
+    fn error_unterminated_string() {
+        let input = "\"hello";
+        let mut lexer = Lexer::new(input);
+
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::Illegal);
+        assert_eq!(token.lexeme(input), "\"hello");
+
+        let errors = lexer.errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0].error,
+            LexerErrorType::UnterminatedString
+        ));
+        assert_eq!(
+            errors[0].message(input),
+            "Unterminated string: \"\\\"hello\""
+        );
+    }
+
+    #[test]
+    fn error_unterminated_string_empty() {
+        let input = "\"";
+        let mut lexer = Lexer::new(input);
+
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::Illegal);
+
+        let errors = lexer.errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0].error,
+            LexerErrorType::UnterminatedString
+        ));
+    }
+
+    #[test]
+    fn error_invalid_number_trailing_underscore() {
+        let input = "123_";
+        let mut lexer = Lexer::new(input);
+
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::Illegal);
+        assert_eq!(token.lexeme(input), "123_");
+
+        let errors = lexer.errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0].error, LexerErrorType::InvalidNumber));
+        assert_eq!(errors[0].message(input), "Invalid number format: \"123_\"");
+    }
+
+    #[test]
+    fn error_invalid_number_consecutive_underscores() {
+        let input = "1__2";
+        let mut lexer = Lexer::new(input);
+
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::Illegal);
+        assert_eq!(token.lexeme(input), "1__2");
+
+        let errors = lexer.errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0].error, LexerErrorType::InvalidNumber));
+    }
+
+    #[test]
+    fn error_invalid_number_underscore_prefix_digit() {
+        // Identifiers starting with underscore followed by digit are invalid
+        let input = "_1";
+        let mut lexer = Lexer::new(input);
+
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::Illegal);
+        assert_eq!(token.lexeme(input), "_1");
+
+        let errors = lexer.errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0].error, LexerErrorType::InvalidNumber));
+    }
+
+    #[test]
+    fn error_invalid_symbol_starts_with_digit() {
+        let input = ":1test";
+        let mut lexer = Lexer::new(input);
+
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::Illegal);
+
+        let errors = lexer.errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0].error, LexerErrorType::InvalidSymbol));
+    }
+
+    #[test]
+    fn error_invalid_symbol_starts_with_bang() {
+        let input = ":!test";
+        let mut lexer = Lexer::new(input);
+
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::Illegal);
+
+        let errors = lexer.errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0].error, LexerErrorType::InvalidSymbol));
+    }
+
+    #[test]
+    fn error_invalid_symbol_empty() {
+        let input = ": ";
+        let mut lexer = Lexer::new(input);
+
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::Illegal);
+
+        let errors = lexer.errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0].error, LexerErrorType::InvalidSymbol));
+    }
+
+    #[test]
+    fn error_multiple_errors_in_input() {
+        let input = "& | 1_ :!";
+        let mut lexer = Lexer::new(input);
+
+        // Consume all tokens
+        let tokens: Vec<_> = lexer.by_ref().collect();
+
+        // Should have 4 illegal tokens
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|t| t.token_type == TokenType::Illegal)
+                .count(),
+            4
+        );
+
+        // Should have 4 errors recorded
+        let errors = lexer.errors();
+        assert_eq!(errors.len(), 4);
+
+        assert!(matches!(
+            errors[0].error,
+            LexerErrorType::UnexpectedCharacter
+        )); // &
+        assert!(matches!(
+            errors[1].error,
+            LexerErrorType::UnexpectedCharacter
+        )); // |
+        assert!(matches!(errors[2].error, LexerErrorType::InvalidNumber)); // 1_
+        assert!(matches!(errors[3].error, LexerErrorType::InvalidSymbol)); // :!
+    }
+
+    #[test]
+    fn error_mixed_valid_and_invalid_tokens() {
+        let input = "def x = 1_ + 2";
+        let mut lexer = Lexer::new(input);
+
+        let _tokens: Vec<_> = lexer.by_ref().collect();
+
+        let expected = vec![
+            (TokenType::Def, "def"),
+            (TokenType::Identifier, "x"),
+            (TokenType::Assign, "="),
+            (TokenType::Illegal, "1_"),
+            (TokenType::Plus, "+"),
+            (TokenType::Integer, "2"),
+        ];
+
+        assert_tokens(expected, input);
+
+        let errors = lexer.errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0].error, LexerErrorType::InvalidNumber));
+    }
+
+    #[test]
+    fn error_recovery_continues_lexing() {
+        let input = "& valid";
+        let mut lexer = Lexer::new(input);
+
+        let token1 = lexer.next_token();
+        assert_eq!(token1.token_type, TokenType::Illegal);
+
+        let token2 = lexer.next_token();
+        assert_eq!(token2.token_type, TokenType::Identifier);
+        assert_eq!(token2.lexeme(input), "valid");
+
+        assert_eq!(lexer.errors().len(), 1);
     }
 }
